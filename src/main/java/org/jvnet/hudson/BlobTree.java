@@ -53,8 +53,7 @@ public class BlobTree implements Closeable {
      * Deletes the underlying files.
      */
     public void delete() throws IOException {
-        iout.close();
-        cout.close();
+        close();
         index.delete();
         content.delete();
     }
@@ -130,11 +129,13 @@ public class BlobTree implements Closeable {
     }
 
     /**
-     * Finishes writing.
+     * Completes writing.
      */
     public void close() throws IOException {
-        if (seq>1)
+        if (seq>0)
             blob.close();
+        iout.close();
+        cout.close();
     }
 
     private static enum Policy {
