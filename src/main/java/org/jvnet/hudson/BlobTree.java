@@ -35,6 +35,7 @@ public class BlobTree implements Closeable {
     private long lastTag = 0;
 
     private final long[] back = new long[32];
+    private final long[] backTag = new long[32];
 
     private BlobWriterStream blob = new BlobWriterStream();
 
@@ -83,14 +84,18 @@ public class BlobTree implements Closeable {
 
                     // write back pointers
                     int h = height(seq);
-                    for (int i=0; i<h; i++)
+                    for (int i=0; i<h; i++) {
+                        iout.writeLong(backTag[i]);
                         iout.writeLong(back[i]);
+                    }
 
                     // update back pointers
                     long pos = iout.getCount();
                     int uh = updateHeight(seq);
-                    for (int i=0; i< uh; i++)
+                    for (int i=0; i< uh; i++) {
                         back[i] = pos;
+                        backTag[i] = tag;
+                    }
 
                     // BLOB number
                     iout.writeInt(seq);
@@ -152,7 +157,7 @@ public class BlobTree implements Closeable {
     }
 
     public Blob readBlob(long tag, Policy policy) throws IOException {
-        final byte[] back = new byte[32*8];
+        final byte[] back = new byte[32*sizeOfBackPtr];
 
         final RandomAccessFile idx = new RandomAccessFile(index,"r");
 
@@ -181,7 +186,7 @@ public class BlobTree implements Closeable {
              * Reads a BLOB that this block points to.
              */
             Blob blob() throws IOException {
-                idx.seek(pos-height()*8-8);
+                idx.seek(pos-height()*sizeOfBackPtr-sizeOfLong);
                 long blobPos = idx.readLong();
                 RandomAccessFile in = new RandomAccessFile(content,"r");
                 in.seek(blobPos);
@@ -191,7 +196,6 @@ public class BlobTree implements Closeable {
             }
         }
         HeaderBlock header = new HeaderBlock();
-        HeaderBlock prev = new HeaderBlock();
 
         lock.readLock().lock();
         try {
@@ -218,17 +222,15 @@ public class BlobTree implements Closeable {
 
                     // read and follow back pointers.
                     int h = header.height();
-                    idx.seek(header.pos-h*8);
-                    idx.readFully(back,0,h*8);
+                    idx.seek(header.pos-h*sizeOfBackPtr);
+                    idx.readFully(back,0,h*sizeOfBackPtr);
                     for (int i=h-1; i>=0; i--) {
                         // find the biggest leap we can make
-                        prev.readAt(longAt(back,i*8));
-                        assert prev.tag()<t;
-                        if (prev.tag()>=tag) {
-                            // swap(&header,&prev)
-                            HeaderBlock swap = header;
-                            header = prev;
-                            prev = swap;
+                        long pt = longAt(back,i*sizeOfBackPtr);
+                        assert pt<t;
+                        if (pt>=tag) {
+                            header.readAt(longAt(back,i*sizeOfBackPtr+sizeOfLong));
+                            assert pt==header.tag();
                             continue OUTER;
                         }
                     }
@@ -236,7 +238,9 @@ public class BlobTree implements Closeable {
                     // there's no exact match, and prev and header are the two nodes that surround the specified tag.
                     switch (policy) {
                     case MATCH:     return null;
-                    case FLOOR:     return prev.blob();
+                    case FLOOR:
+                        header.readAt(longAt(back,sizeOfLong));
+                        return header.blob();
                     case CEIL:      return header.blob();
                     }
                 }
@@ -294,4 +298,7 @@ public class BlobTree implements Closeable {
     private static int byteAt(byte[] buf, int pos) {
         return ((int)buf[pos])&0xFF;
     }
+
+    private static final int sizeOfLong = 8;
+    private static final int sizeOfBackPtr = sizeOfLong + sizeOfLong; /* one for offset, the other for tag*/
 }
