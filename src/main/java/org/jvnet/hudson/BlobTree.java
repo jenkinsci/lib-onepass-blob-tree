@@ -3,6 +3,7 @@ package org.jvnet.hudson;
 import org.apache.commons.io.output.ByteArrayOutputStream;
 import org.apache.commons.io.output.CountingOutputStream;
 
+import java.io.Closeable;
 import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -16,7 +17,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 /**
  * @author Kohsuke Kawaguchi
  */
-public class BlobTree {
+public class BlobTree implements Closeable {
     private final File index;
     private final File content;
 
@@ -28,12 +29,19 @@ public class BlobTree {
 
     /**
      * Sequential blob number to be written next, which determines the height.
+     *
+     * 0 acts as a sentry, and on disk it starts from 1. 
      */
-    private int seq = 1;
+    private int seq = 0;
+
+    /**
+     * Tag numbers need to be monotonic.
+     */
+    private long lastTag = 0;
 
     private final long[] back = new long[32];
 
-    private ByteArrayOutputStream blob = new ByteArrayOutputStream();
+    private BlobWriterStream blob = new BlobWriterStream();
 
     private ReadWriteLock lock = new ReentrantReadWriteLock();
 
@@ -48,43 +56,96 @@ public class BlobTree {
     }
 
     /**
+     * Deletes the underlying files.
+     */
+    public void delete() throws IOException {
+        indexOut.close();
+        contentOut.close();
+        index.delete();
+        content.delete();
+    }
+
+    private class BlobWriterStream extends ByteArrayOutputStream {
+        private boolean closed;
+        private long tag;
+
+        public void resetTo(long tag) {
+            this.tag = tag;
+            closed = false;
+            super.reset();
+        }
+
+        @Override
+        public void close() throws IOException {
+            super.close();
+
+            if (!closed) {
+                closed = true;
+
+                // update of the index needs to happen in sync with the read operation
+                lock.writeLock().lock();
+                try {
+                    // pointer to the blob in content
+                    indexOut.writeLong(contentCounter.getByteCount());
+
+                    // write back pointers
+                    int h = height(seq);
+                    for (int i=0; i<h; i++)
+                        indexOut.writeLong(back[i]);
+
+                    // update back pointers
+                    long pos = indexCounter.getByteCount();
+                    int uh = updateHeight(seq);
+                    for (int i=0; i< uh; i++)
+                        back[i] = pos;
+
+                    // BLOB number
+                    indexOut.writeInt(seq);
+
+                    // tag
+                    indexOut.writeLong(tag);
+
+                    contentOut.writeInt(blob.size());
+                    writeTo(contentOut);
+                } finally {
+                    lock.writeLock().unlock();
+                }
+            }
+        }
+    }
+
+
+    /**
      * Starts writing the next blob.
      */
     public OutputStream writeNext(long tag) throws IOException {
         if (seq>0) {
-            // commit the previously written blob
-            contentOut.writeInt(blob.size());
-            blob.writeTo(contentOut);
-            blob.reset();
+            if (tag<lastTag)
+                    throw new IllegalArgumentException("Last written tag was "+lastTag+" and tried to write a smaller tag "+tag);
+            blob.close();
         }
+        seq++;
 
-        // update of the index needs to happen in sync with the read operation
-        lock.writeLock().lock();
-        try {
-            // pointer to the blob in content
-            indexOut.writeLong(contentCounter.getByteCount());
+        lastTag = tag;
+        blob.resetTo(tag);
+        return blob;
+    }
 
-            // write back pointers
-            int h = height(seq);
-            for (int i=0; i<h; i++)
-                indexOut.writeLong(back[i]);
+    /**
+     * Commits the blob buffered in memory.
+     */
+    private void commitBlob() throws IOException {
+        contentOut.writeInt(blob.size());
+        blob.writeTo(contentOut);
+        blob.reset();
+    }
 
-            // update back pointers
-            long pos = indexCounter.getByteCount();
-            int uh = updateHeight(seq);
-            for (int i=0; i< uh; i++)
-                back[i] = pos;
-            
-            // BLOB number
-            indexOut.writeInt(seq++);
-
-            // tag
-            indexOut.writeLong(tag);
-            
-            return blob;
-        } finally {
-            lock.writeLock().unlock();
-        }
+    /**
+     * Finishes writing.
+     */
+    public void close() throws IOException {
+        if (seq>1)
+            blob.close();
     }
 
     private static enum Policy {
@@ -112,8 +173,13 @@ public class BlobTree {
         final RandomAccessFile idx = new RandomAccessFile(index,"r");
 
         class HeaderBlock {
-            long pos;
+            long pos = -1;
             final byte[] buf = new byte[12];
+
+            boolean isRead() {
+                return pos!=-1;
+            }
+
             void readAt(long pos) throws IOException {
                 this.pos = pos;
                 idx.seek(pos);
@@ -150,7 +216,9 @@ public class BlobTree {
         lock.readLock().lock();
         try {
             // start at the last entry
-            header.readAt(idx.length() - 12/*header size*/);
+            long len = idx.length();
+            if (len==0)     return null;    // no record written yet
+            header.readAt(len - 12/*header size*/);
 
             OUTER:
             while (true) {
@@ -204,6 +272,8 @@ public class BlobTree {
      * This computes the number of backpointers we need for the given sequence #.
      */
     private static int height(int seq) {
+        assert seq>0;
+
         int r = 1;
         while((seq%2)==0) {
             r++;
@@ -218,6 +288,8 @@ public class BlobTree {
     }
 
     private static int updateHeight(int seq) {
+        assert seq>0;
+
         int r = 1;
         while((seq%2)==0) {
             r++;
