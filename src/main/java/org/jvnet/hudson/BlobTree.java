@@ -1,10 +1,8 @@
 package org.jvnet.hudson;
 
 import org.apache.commons.io.output.ByteArrayOutputStream;
-import org.apache.commons.io.output.CountingOutputStream;
 
 import java.io.Closeable;
-import java.io.DataOutputStream;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
@@ -21,11 +19,8 @@ public class BlobTree implements Closeable {
     private final File index;
     private final File content;
 
-    private final DataOutputStream indexOut;
-    private final DataOutputStream contentOut;
-
-    private final CountingOutputStream indexCounter;
-    private final CountingOutputStream contentCounter;
+    private final CountingDataOutputStream iout;
+    private final CountingDataOutputStream cout;
 
     /**
      * Sequential blob number to be written next, which determines the height.
@@ -49,18 +44,16 @@ public class BlobTree implements Closeable {
         index = new File(content.getPath()+".index");
         this.content = content;
 
-        this.indexCounter = new CountingOutputStream(new FileOutputStream(index));
-        this.indexOut = new DataOutputStream(indexCounter);
-        this.contentCounter = new CountingOutputStream(new FileOutputStream(content));
-        this.contentOut = new DataOutputStream(contentCounter);
+        this.iout = new CountingDataOutputStream(new FileOutputStream(index));
+        this.cout = new CountingDataOutputStream(new FileOutputStream(content));
     }
 
     /**
      * Deletes the underlying files.
      */
     public void delete() throws IOException {
-        indexOut.close();
-        contentOut.close();
+        iout.close();
+        cout.close();
         index.delete();
         content.delete();
     }
@@ -86,27 +79,27 @@ public class BlobTree implements Closeable {
                 lock.writeLock().lock();
                 try {
                     // pointer to the blob in content
-                    indexOut.writeLong(contentCounter.getByteCount());
+                    iout.writeLong(cout.getCount());
 
                     // write back pointers
                     int h = height(seq);
                     for (int i=0; i<h; i++)
-                        indexOut.writeLong(back[i]);
+                        iout.writeLong(back[i]);
 
                     // update back pointers
-                    long pos = indexCounter.getByteCount();
+                    long pos = iout.getCount();
                     int uh = updateHeight(seq);
                     for (int i=0; i< uh; i++)
                         back[i] = pos;
 
                     // BLOB number
-                    indexOut.writeInt(seq);
+                    iout.writeInt(seq);
 
                     // tag
-                    indexOut.writeLong(tag);
+                    iout.writeLong(tag);
 
-                    contentOut.writeInt(blob.size());
-                    writeTo(contentOut);
+                    cout.writeInt(blob.size());
+                    writeTo(cout);
                 } finally {
                     lock.writeLock().unlock();
                 }
@@ -129,15 +122,6 @@ public class BlobTree implements Closeable {
         lastTag = tag;
         blob.resetTo(tag);
         return blob;
-    }
-
-    /**
-     * Commits the blob buffered in memory.
-     */
-    private void commitBlob() throws IOException {
-        contentOut.writeInt(blob.size());
-        blob.writeTo(contentOut);
-        blob.reset();
     }
 
     /**
@@ -175,10 +159,6 @@ public class BlobTree implements Closeable {
         class HeaderBlock {
             long pos = -1;
             final byte[] buf = new byte[12];
-
-            boolean isRead() {
-                return pos!=-1;
-            }
 
             void readAt(long pos) throws IOException {
                 this.pos = pos;
