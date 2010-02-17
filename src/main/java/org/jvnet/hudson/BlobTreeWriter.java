@@ -12,7 +12,7 @@ import java.io.OutputStream;
 /**
  * @author Kohsuke Kawaguchi
  */
-public class BlobTree extends BlobTreeBase implements Closeable {
+public class BlobTreeWriter extends BlobTreeBase implements Closeable {
     private final CountingDataOutputStream iout;
     private final CountingDataOutputStream cout;
 
@@ -33,7 +33,7 @@ public class BlobTree extends BlobTreeBase implements Closeable {
 
     private BlobWriterStream blob = new BlobWriterStream();
 
-    public BlobTree(File content) throws FileNotFoundException {
+    public BlobTreeWriter(File content) throws FileNotFoundException {
         super(content);
 
         this.iout = new CountingDataOutputStream(new FileOutputStream(index));

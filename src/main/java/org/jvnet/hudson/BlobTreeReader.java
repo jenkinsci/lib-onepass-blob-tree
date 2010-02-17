@@ -54,7 +54,7 @@ public class BlobTreeReader extends BlobTreeBase {
                 return longAt(buf,4);
             }
             int height() {
-                return BlobTree.height(seq());
+                return BlobTreeWriter.height(seq());
             }
 
             /**

@@ -15,28 +15,30 @@ import static java.lang.Long.*;
  * @author Kohsuke Kawaguchi
  */
 public class BlobTreeTest extends TestCase {
-    BlobTree t;
+    BlobTreeWriter w;
+    BlobTreeReader r;
 
     @Override
     protected void setUp() throws Exception {
         super.setUp();
-        t  = new BlobTree(new File("test"));
+        w = new BlobTreeWriter(new File("test"));
+        r = new BlobTreeReader(new File("test"));
     }
 
     @Override
     protected void tearDown() throws Exception {
         super.tearDown();
-        t.delete();
+        w.delete();
     }
 
     /**
      * Make sure we assert on incorrect tag order.
      */
     public void testOrderCheck() throws IOException {
-        t.writeNext(MIN_VALUE); // should allow us to write LONG_MIN
-        t.writeNext(MAX_VALUE);
+        w.writeNext(MIN_VALUE); // should allow us to write LONG_MIN
+        w.writeNext(MAX_VALUE);
         try {
-            t.writeNext(0);
+            w.writeNext(0);
             fail();
         } catch (IllegalArgumentException e) {
             // as expected
@@ -44,9 +46,9 @@ public class BlobTreeTest extends TestCase {
     }
 
     public void testEmptyRead() throws IOException {
-        assertNull(t.readBlob(0));
-        assertNull(t.readBlobFloor(MAX_VALUE));
-        assertNull(t.readBlobCeil(MIN_VALUE));
+        assertNull(r.readBlob(0));
+        assertNull(r.readBlobFloor(MAX_VALUE));
+        assertNull(r.readBlobCeil(MIN_VALUE));
     }
 
     /**
@@ -62,22 +64,22 @@ public class BlobTreeTest extends TestCase {
         }
 
         for (Entry<Integer,String> e : source.entrySet()) {
-            write(t, e.getKey(), e.getValue());
+            write(w, e.getKey(), e.getValue());
         }
-        t.close();
+        w.close();
 
-        t.readBlobCeil(0);
+        r.readBlobCeil(0);
 
         // test exact match
         for (Entry<Integer,String> e : source.entrySet()) {
             Integer tag = e.getKey();
             String p = e.getValue();
             
-            assertBlob(t.readBlob(tag), tag, p);
-            assertNull(t.readBlob(tag+1));
+            assertBlob(r.readBlob(tag), tag, p);
+            assertNull(r.readBlob(tag+1));
 
-            assertBlob(t.readBlobFloor(tag+1), tag, p);
-            assertBlob(t.readBlobCeil(tag-1), tag, p);
+            assertBlob(r.readBlobFloor(tag+1), tag, p);
+            assertBlob(r.readBlobCeil(tag-1), tag, p);
         }
     }
 
@@ -85,18 +87,18 @@ public class BlobTreeTest extends TestCase {
      * A BLOB that's partially written shouldn't be visible to the reader.
      */
     public void testPartialWrite() throws Exception {
-        OutputStream o = t.writeNext(1);
+        OutputStream o = w.writeNext(1);
 
         // since 1 is still being written, this should fail to read
-        assertNull(t.readBlob(1));
-        assertNull(t.readBlobCeil(0));
-        assertNull(t.readBlobFloor(2));
+        assertNull(r.readBlob(1));
+        assertNull(r.readBlobCeil(0));
+        assertNull(r.readBlobFloor(2));
 
         o.write(5);
         o.close();
-        assertNotNull(t.readBlob(1));
-        assertNotNull(t.readBlobCeil(0));
-        assertNotNull(t.readBlobFloor(2));
+        assertNotNull(r.readBlob(1));
+        assertNotNull(r.readBlobCeil(0));
+        assertNotNull(r.readBlobFloor(2));
     }
 
     private void assertBlob(Blob b, int tag, String payload) {
@@ -105,7 +107,7 @@ public class BlobTreeTest extends TestCase {
         assertEquals(payload,new String(b.payload));
     }
 
-    private void write(BlobTree t, int tag, String content) throws IOException {
+    private void write(BlobTreeWriter t, int tag, String content) throws IOException {
         OutputStream out = t.writeNext(tag);
         out.write(content.getBytes());
     }
