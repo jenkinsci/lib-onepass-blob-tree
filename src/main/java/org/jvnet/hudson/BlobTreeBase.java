@@ -6,6 +6,36 @@ import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
+ *
+ *
+ * <h2>Index File Structure</h2>
+ * <pre>
+ * struct IndexFile {
+ *   Record[]
+ * }
+ *
+ * struct Record {
+ *      // the corresponding BLOB record starts at this offset in the content file.
+ *      long payloadOffset;
+ *      // back pointers that point to earlier Records.
+ *      // N = {@linkplain #height(int) height}(seq)
+ *      BackPointer[N] backpointers;
+ *
+ *      // sequential number of this record. 1 origin.
+ *      // <b>Backpointer.offset refers to this position in the record</b>
+ *      int seq;
+ *      // tag of the BLOB
+ *      long tag;
+ * }
+ *
+ * struct BackPointer {
+ *      // together this says "there's a BLOB that has the specified tag, and its index starts
+ *      // at the specified offset of the index file. 
+ *      long tag;
+ *      long offset;
+ * }
+ * </pre>
+ *
  * @author Kohsuke Kawaguchi
  */
 abstract class BlobTreeBase {
@@ -13,6 +43,9 @@ abstract class BlobTreeBase {
     final File content;
 
     final String lockKey;
+    /**
+     * Lock that controls the contention between {@link BlobTreeReader} and {@link BlobTreeWriter}.
+     */
     final ReadWriteLock lock;
 
 
@@ -77,6 +110,7 @@ abstract class BlobTreeBase {
         return ((int)buf[pos])&0xFF;
     }
 
+    static final int sizeOfInt = 4;
     static final int sizeOfLong = 8;
     static final int sizeOfBackPtr = sizeOfLong + sizeOfLong; /* one for offset, the other for tag*/
 

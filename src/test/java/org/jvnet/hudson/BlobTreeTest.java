@@ -5,6 +5,7 @@ import junit.framework.TestCase;
 import java.io.File;
 import java.io.IOException;
 import java.io.OutputStream;
+import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.TreeMap;
@@ -46,15 +47,52 @@ public class BlobTreeTest extends TestCase {
     }
 
     public void testEmptyRead() throws IOException {
-        assertNull(r.readBlob(0));
-        assertNull(r.readBlobFloor(MAX_VALUE));
-        assertNull(r.readBlobCeil(MIN_VALUE));
+        assertNull(r.at(0));
+        assertNull(r.floor(MAX_VALUE));
+        assertNull(r.ceil(MIN_VALUE));
     }
 
     /**
      * Basic full read/write test.
      */
     public void test1() throws Exception {
+        Map<Integer, String> source = createTestDataSet();
+
+        r.ceil(0);
+
+        // test exact match
+        for (Entry<Integer,String> e : source.entrySet()) {
+            Integer tag = e.getKey();
+            String p = e.getValue();
+            
+            assertBlob(r.at(tag), tag, p);
+            assertNull(r.at(tag+1));
+
+            assertBlob(r.floor(tag+1), tag, p);
+            assertBlob(r.ceil(tag-1), tag, p);
+        }
+    }
+
+    /**
+     * Test range read.
+     */
+    public void testRangeRead() throws Exception {
+        Map<Integer, String> source = createTestDataSet();
+
+        assertEquals(0,r.range(0,1).size());
+        assertEquals(0,r.range(99,Integer.MAX_VALUE).size());
+
+        List<Blob> l = r.range(0, 3);
+        assertEquals(1,l.size());
+        assertBlob(l.get(0),1,source.get(1));
+
+        l = r.range(3,6);
+        assertEquals(2,l.size());
+        assertBlob(l.get(0),3,source.get(3));
+        assertBlob(l.get(1),5,source.get(5));
+    }
+
+    private Map<Integer, String> createTestDataSet() throws IOException {
         // create sparse tags and variable size payloads
         Map<Integer,String> source = new TreeMap<Integer, String>();
         StringBuilder payload = new StringBuilder();
@@ -67,20 +105,7 @@ public class BlobTreeTest extends TestCase {
             write(w, e.getKey(), e.getValue());
         }
         w.close();
-
-        r.readBlobCeil(0);
-
-        // test exact match
-        for (Entry<Integer,String> e : source.entrySet()) {
-            Integer tag = e.getKey();
-            String p = e.getValue();
-            
-            assertBlob(r.readBlob(tag), tag, p);
-            assertNull(r.readBlob(tag+1));
-
-            assertBlob(r.readBlobFloor(tag+1), tag, p);
-            assertBlob(r.readBlobCeil(tag-1), tag, p);
-        }
+        return source;
     }
 
     /**
@@ -90,15 +115,15 @@ public class BlobTreeTest extends TestCase {
         OutputStream o = w.writeNext(1);
 
         // since 1 is still being written, this should fail to read
-        assertNull(r.readBlob(1));
-        assertNull(r.readBlobCeil(0));
-        assertNull(r.readBlobFloor(2));
+        assertNull(r.at(1));
+        assertNull(r.ceil(0));
+        assertNull(r.floor(2));
 
         o.write(5);
         o.close();
-        assertNotNull(r.readBlob(1));
-        assertNotNull(r.readBlobCeil(0));
-        assertNotNull(r.readBlobFloor(2));
+        assertNotNull(r.at(1));
+        assertNotNull(r.ceil(0));
+        assertNotNull(r.floor(2));
     }
 
     private void assertBlob(Blob b, int tag, String payload) {
