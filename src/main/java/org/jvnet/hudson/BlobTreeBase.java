@@ -63,36 +63,6 @@ abstract class BlobTreeBase {
         }
     }
 
-    /**
-     * This computes the number of backpointers we need for the given sequence #.
-     */
-    static int height(int seq) {
-        assert seq>0;
-
-        int r = 1;
-        while((seq%2)==0) {
-            r++;
-            seq/=2;
-        }
-
-        // if we are the first node of this height, then the top-most back pointer will
-        // always points to NIL, so there's no point in writing that entry
-        if (seq==1)   r--;
-
-        return r;
-    }
-
-    static int updateHeight(int seq) {
-        assert seq>0;
-
-        int r = 1;
-        while((seq%2)==0) {
-            r++;
-            seq/=2;
-        }
-        return r;
-    }
-
     static long longAt(byte[] buf, int pos) {
         return ((long)(intAt(buf,pos)) << 32) + (intAt(buf,pos+4) & 0xFFFFFFFFL);
     }
@@ -112,7 +82,7 @@ abstract class BlobTreeBase {
 
     static final int sizeOfInt = 4;
     static final int sizeOfLong = 8;
-    static final int sizeOfBackPtr = sizeOfLong + sizeOfLong; /* one for offset, the other for tag*/
+    static final int sizeOfIndexEntry = sizeOfLong*2; /* pointer to BLOB in the content file and tag */
 
     private static final WeakHashMap<String, ReentrantReadWriteLock> LOCKS = new WeakHashMap<String, ReentrantReadWriteLock>();
 }

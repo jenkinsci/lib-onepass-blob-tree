@@ -17,19 +17,11 @@ public class BlobTreeWriter extends BlobTreeBase implements Closeable {
     private final CountingDataOutputStream cout;
 
     /**
-     * Sequential blob number to be written next, which determines the height.
-     *
-     * 0 acts as a sentry, and on disk it starts from 1. 
-     */
-    private int seq = 0;
-
-    /**
      * Tag numbers need to be monotonic.
      */
     private long lastTag = 0;
 
-    private final long[] back = new long[32];
-    private final long[] backTag = new long[32];
+    private boolean first = true;
 
     private BlobWriterStream blob = new BlobWriterStream();
 
@@ -69,29 +61,10 @@ public class BlobTreeWriter extends BlobTreeBase implements Closeable {
                 // update of the index needs to happen in sync with the read operation
                 lock.writeLock().lock();
                 try {
-                    // pointer to the blob in content
-                    iout.writeLong(cout.getCount());
-
-                    // write back pointers
-                    int h = height(seq);
-                    for (int i=0; i<h; i++) {
-                        iout.writeLong(backTag[i]);
-                        iout.writeLong(back[i]);
-                    }
-
-                    // update back pointers
-                    long pos = iout.getCount();
-                    int uh = updateHeight(seq);
-                    for (int i=0; i< uh; i++) {
-                        back[i] = pos;
-                        backTag[i] = tag;
-                    }
-
-                    // BLOB number
-                    iout.writeInt(seq);
-
                     // tag
                     iout.writeLong(tag);
+                    // pointer to the blob in content
+                    iout.writeLong(cout.getCount());
 
                     cout.writeInt(blob.size());
                     writeTo(cout);
@@ -107,12 +80,12 @@ public class BlobTreeWriter extends BlobTreeBase implements Closeable {
      * Starts writing the next blob.
      */
     public OutputStream writeNext(long tag) throws IOException {
-        if (seq>0) {
+        if (!first) {
             if (tag<lastTag)
                     throw new IllegalArgumentException("Last written tag was "+lastTag+" and tried to write a smaller tag "+tag);
             blob.close();
         }
-        seq++;
+        first = false;
 
         lastTag = tag;
         blob.resetTo(tag);
@@ -123,12 +96,9 @@ public class BlobTreeWriter extends BlobTreeBase implements Closeable {
      * Completes writing.
      */
     public void close() throws IOException {
-        if (seq>0)
+        if (!first)
             blob.close();
         iout.close();
         cout.close();
     }
-
-
-
 }

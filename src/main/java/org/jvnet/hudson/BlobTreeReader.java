@@ -32,10 +32,11 @@ public class BlobTreeReader extends BlobTreeBase implements Closeable {
          * Byte offset of the record in the index file that this cursor is pointing at.
          */
         long pos = -1;
+
         /**
          * The header portion of the index file, excluding back pointers.
          */
-        final byte[] buf = new byte[12];
+        final byte[] buf = new byte[sizeOfIndexEntry];
 
         /**
          * Moves the cursor to the specified byte position in the index.
@@ -47,34 +48,17 @@ public class BlobTreeReader extends BlobTreeBase implements Closeable {
         }
 
         /**
-         * Obtains the seq # of the current BLOB that this cursor points to.
-         */
-        int seq() {
-            int s = intAt(buf, 0);
-            assert s>0;
-            return s;
-        }
-
-        /**
          * Obtains the tag # of the current BLOB that this cursor points to.
          */
         long tag() {
-            return longAt(buf,4);
-        }
-
-        /**
-         * How many back pointers does the current index record have?
-         */
-        int height() {
-            return BlobTreeBase.height(seq());
+            return longAt(buf,0);
         }
 
         /**
          * Reads a BLOB that this cursor points to.
          */
         Blob blob() throws IOException {
-            idx.seek(pos-height()*sizeOfBackPtr-sizeOfLong);
-            long blobPos = idx.readLong();
+            long blobPos = longAt(buf,sizeOfLong);
             body.seek(blobPos);
             byte[] buf = new byte[body.readInt()];
             body.readFully(buf);
@@ -84,14 +68,19 @@ public class BlobTreeReader extends BlobTreeBase implements Closeable {
         /**
          * Moves the cursor to the next blob.
          *
-         * @return
-         *      false if this is the last record and there's no next entry
          */
-        boolean next() throws IOException {
-            long newPos = pos + sizeOfLong * 2 + sizeOfInt + sizeOfBackPtr * BlobTreeBase.height(seq() + 1);
-            if (newPos > idx.length())  return false;
+        Cursor next() throws IOException {
+            long newPos = pos + sizeOfIndexEntry;
+            if (newPos >= idx.length())  return null;
             seek(newPos);
-            return true;
+            return this;
+        }
+
+        Cursor prev() throws IOException {
+            long newPos = pos - sizeOfIndexEntry;
+            if (newPos<0)  return null;
+            seek(newPos);
+            return this;
         }
     }
 
@@ -104,55 +93,39 @@ public class BlobTreeReader extends BlobTreeBase implements Closeable {
      * or null if no such blob was found. This is the gut of the search logic.
      */
     private Cursor seek(long tag, Policy policy) throws IOException {
-        final byte[] back = new byte[32*sizeOfBackPtr];
+        // [s,e) designates the range of binary search
+        long s=0;
+        long e=idx.length()/sizeOfIndexEntry;
+
+        final long total = e;
 
         Cursor cur = new Cursor();
-
-        // start at the last entry
-        long len = idx.length();
-        if (len==0)     return null;    // no record written yet
-        cur.seek(len - 12/*header size*/);
-
-        OUTER:
-        while (true) {
-            // read the index of BLOB at pos
-            final long t = cur.tag();
-
-            if (t<tag) {
-                if (policy== Policy.FLOOR)
-                    return cur;
-                return null; // no match found
-            }
-            if (t==tag) {
-                // found the match
-                return cur;
+        while (s<e) {
+            long middle = (s+e)/2;
+            cur.seek(middle*sizeOfIndexEntry);
+            long pivot = cur.tag();
+            if (pivot==tag)
+                return cur; // found a match
+            if (pivot<tag) {
+                s = middle+1;
             } else {
-                // continue searching
-
-                // read and follow back pointers.
-                int h = cur.height();
-                idx.seek(cur.pos-h*sizeOfBackPtr);
-                idx.readFully(back,0,h*sizeOfBackPtr);
-                for (int i=h-1; i>=0; i--) {
-                    // find the biggest leap we can make
-                    long pt = longAt(back,i*sizeOfBackPtr);
-                    assert pt<t;
-                    if (pt>=tag) {
-                        cur.seek(longAt(back,i*sizeOfBackPtr+sizeOfLong));
-                        assert pt== cur.tag();
-                        continue OUTER;
-                    }
-                }
-
-                // there's no exact match, and prev and header are the two nodes that surround the specified tag.
-                switch (policy) {
-                case MATCH:     return null;
-                case FLOOR:
-                    cur.seek(longAt(back,sizeOfLong));
-                    return cur;
-                case CEIL:      return cur;
-                }
+                e = middle;
             }
+        }
+
+        // no exact match
+        assert s==e;
+
+        switch (policy) {
+        case FLOOR:
+            if (s==0)   return null;
+            cur.seek((s-1)*sizeOfIndexEntry);
+            return cur;
+        case CEIL:
+            if (s==total)   return null;
+            cur.seek(s*sizeOfIndexEntry);
+            return cur;
+        default:        return null;
         }
     }
 
@@ -194,9 +167,9 @@ public class BlobTreeReader extends BlobTreeBase implements Closeable {
             if (cur==null || end<=cur.tag())    return Collections.emptyList(); // no match
 
             List<Blob> r = new ArrayList<Blob>();
-            while (cur.tag()<end) {
+            while (cur!=null && cur.tag()<end) {
                 r.add(cur.blob());
-                if (!cur.next())    break;
+                cur = cur.next();
             }
             return r;
         } finally {
