@@ -17,22 +17,8 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  * struct Record {
  *      // the corresponding BLOB record starts at this offset in the content file.
  *      long payloadOffset;
- *      // back pointers that point to earlier Records.
- *      // N = {@linkplain #height(int) height}(seq)
- *      BackPointer[N] backpointers;
- *
- *      // sequential number of this record. 1 origin.
- *      // <b>Backpointer.offset refers to this position in the record</b>
- *      int seq;
  *      // tag of the BLOB
  *      long tag;
- * }
- *
- * struct BackPointer {
- *      // together this says "there's a BLOB that has the specified tag, and its index starts
- *      // at the specified offset of the index file. 
- *      long tag;
- *      long offset;
  * }
  * </pre>
  *
